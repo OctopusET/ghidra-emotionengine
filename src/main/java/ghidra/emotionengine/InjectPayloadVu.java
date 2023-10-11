@@ -137,7 +137,10 @@ public class InjectPayloadVu extends InjectPayloadCallother {
 			new SleighParserContext(con.baseAddr, con.nextAddr, con.refAddr, con.callAddr);
 		ParserWalker walker = new ParserWalker(protoContext);
 		PcodeEmitObjects emit = new PcodeEmitObjects(walker);
-		inject(con, emit);
+		try {
+			inject(con, emit);
+		} catch(Exception e) {
+		}
 		return emit.getPcodeOp();
 	}
 
