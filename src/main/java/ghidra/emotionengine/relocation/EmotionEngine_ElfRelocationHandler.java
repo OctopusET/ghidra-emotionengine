@@ -25,8 +25,13 @@ import ghidra.program.model.listing.BookmarkManager;
 import ghidra.program.model.listing.BookmarkType;
 import ghidra.program.model.listing.Program;
 import ghidra.program.model.mem.*;
+import ghidra.program.model.reloc.Relocation.Status;
+import ghidra.program.model.reloc.RelocationResult;
 import ghidra.util.classfinder.ExtensionPointProperties;
 import ghidra.util.exception.NotFoundException;
+
+import static ghidra.emotionengine.EmotionEngine_ElfExtension.E_MIPS_MACH_5900;
+import static ghidra.emotionengine.EmotionEngine_ElfExtension.ET_IRX2;
 
 @ExtensionPointProperties(priority = 2)
 public class EmotionEngine_ElfRelocationHandler extends MIPS_ElfRelocationHandler {
@@ -46,9 +51,6 @@ public class EmotionEngine_ElfRelocationHandler extends MIPS_ElfRelocationHandle
 	private static final int LOW_MASK = 0xffff;
 	private static final int HIGH_MASK = 0xffff0000;
 	private static final int DVP_MASK = 0x7FFFFFF0;
-	
-	public static final short ET_IRX2 = -127;
-	public static final int E_MIPS_MACH_5900 = 0x00920000;
 
 	@Override
 	public boolean canRelocate(ElfHeader elf) {
@@ -56,8 +58,8 @@ public class EmotionEngine_ElfRelocationHandler extends MIPS_ElfRelocationHandle
 	}
 
 	@Override
-	public void relocate(ElfRelocationContext elfRelocationContext, ElfRelocation relocation,
-			Address relocationAddress) throws MemoryAccessException, NotFoundException {
+	public RelocationResult relocate(ElfRelocationContext elfRelocationContext, ElfRelocation relocation,
+			Address relocationAddress) throws MemoryAccessException {
 		Program program = elfRelocationContext.getProgram();
 		Memory memory = program.getMemory();
 		MessageLog log = elfRelocationContext.getLog();
@@ -91,18 +93,20 @@ public class EmotionEngine_ElfRelocationHandler extends MIPS_ElfRelocationHandle
 				if (elfRelocationContext.getElfHeader().e_type() == ET_IRX2) {
 					markAsError(program, relocationAddress, relocation.getType(),
 						symbolName, ILLEGAL_RELOCATION_MESSAGE, log);
-					return;
+					return RelocationResult.FAILURE;
 				}
 				ElfRelocation nextReloc = getNextRelocation(
 					elfRelocationContext, relocation);
 				if (nextReloc == null || nextReloc.getType() != R_MIPS_ADDEND) {
 					markAsError(program, relocationAddress, relocation.getType(),
 						symbolName, ILLEGAL_MHI16_MESSAGE, log);
+					return RelocationResult.FAILURE;
 				}
 				value =  (int) nextReloc.getOffset()+base;
 				value = (((value >> 15) + 1) >> 1) & LOW_MASK;
 				int offset = 0;
 				Address currentAddress = relocationAddress;
+				int byteLength = 0;
 				do {
 					oldValue = memory.getInt(currentAddress);
 					offset = ((oldValue & LOW_MASK) << 16) >> 14;
@@ -110,8 +114,9 @@ public class EmotionEngine_ElfRelocationHandler extends MIPS_ElfRelocationHandle
 					newValue |= value;
 					memory.setInt(currentAddress, newValue);
 					currentAddress = currentAddress.add(offset);
+					byteLength += 4;
 				} while(offset != 0);
-				return;
+				return new RelocationResult(Status.APPLIED, byteLength);
 			case R_MIPS_DVP_27_S4:
 				/*
 				HOWTO (R_MIPS_DVP_27_S4,	  // type //
@@ -135,7 +140,7 @@ public class EmotionEngine_ElfRelocationHandler extends MIPS_ElfRelocationHandle
 				break;
 			case R_MIPS_ADDEND:
 				// already accounted for
-				return;
+				return RelocationResult.SKIPPED;
 			case R_MIPS15_S3:
 				/*
 					HOWTO (R_MIPS15_S3,           /* type 
@@ -219,10 +224,12 @@ public class EmotionEngine_ElfRelocationHandler extends MIPS_ElfRelocationHandle
 			case MIPS_ElfRelocationConstants.R_MIPS_HI16:
 			case MIPS_ElfRelocationConstants.R_MIPS_LO16:
 			case MIPS_ElfRelocationConstants.R_MIPS_GPREL16:
-				return;
+				return RelocationResult.UNSUPPORTED;
 		}
 
 		memory.setInt(relocationAddress, newValue);
+
+		return new RelocationResult(Status.APPLIED, 4);
 	}
 
 	private ElfRelocation getNextRelocation(ElfRelocationContext context,
